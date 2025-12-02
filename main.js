@@ -128,15 +128,26 @@ function toLuma(imageData) {
   return luma;
 }
 
-function applyLumaToImageData(imageData, luma) {
+function copyMatrix(matrix) {
+  return matrix.map(row => row.slice());
+}
+
+function applyLumaToImageData(imageData, luma, baseLuma = null) {
   const { data, width, height } = imageData;
   let idx = 0;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const value = clamp(luma[y][x]);
-      data[idx] = value;
-      data[idx + 1] = value;
-      data[idx + 2] = value;
+      if (baseLuma) {
+        const delta = clamp(luma[y][x]) - baseLuma[y][x];
+        data[idx] = clamp(data[idx] + delta);
+        data[idx + 1] = clamp(data[idx + 1] + delta);
+        data[idx + 2] = clamp(data[idx + 2] + delta);
+      } else {
+        const value = clamp(luma[y][x]);
+        data[idx] = value;
+        data[idx + 1] = value;
+        data[idx + 2] = value;
+      }
       data[idx + 3] = 255;
       idx += 4;
     }
@@ -183,7 +194,8 @@ function idct2(coeff) {
 }
 
 function embedDCT(imageData, bits, strength = 6) {
-  const luma = toLuma(imageData);
+  const baseLuma = toLuma(imageData);
+  const luma = copyMatrix(baseLuma);
   const w = imageData.width, h = imageData.height;
   const delta = 2 + strength * 0.8;
   const posA = [2, 3], posB = [3, 2];
@@ -211,7 +223,7 @@ function embedDCT(imageData, bits, strength = 6) {
     if (bitIdx >= bits.length) break;
   }
   log(`DCT 水印写入 ${bitIdx} bits`);
-  return applyLumaToImageData(imageData, luma);
+  return applyLumaToImageData(imageData, luma, baseLuma);
 }
 
 function extractDCT(imageData, bitCount = 0) {
@@ -279,7 +291,8 @@ function haarIdwt(coeff) {
 }
 
 function embedDWT(imageData, bits, strength = 6) {
-  const luma = toLuma(imageData);
+  const baseLuma = toLuma(imageData);
+  const luma = copyMatrix(baseLuma);
   const hEven = luma.length - (luma.length % 2);
   const wEven = luma[0].length - (luma[0].length % 2);
   const trimmed = luma.slice(0, hEven).map(row => row.slice(0, wEven));
@@ -299,7 +312,7 @@ function embedDWT(imageData, bits, strength = 6) {
     }
   }
   log(`DWT 水印写入 ${bitIdx} bits`);
-  return applyLumaToImageData(imageData, luma);
+  return applyLumaToImageData(imageData, luma, baseLuma);
 }
 
 function extractDWT(imageData, bitCount = 0) {
@@ -318,15 +331,19 @@ function extractDWT(imageData, bitCount = 0) {
   return bits;
 }
 
+function positionsPerBit(pixels, bitCount) {
+  return Math.max(12, Math.floor(pixels / Math.max(bitCount, 1) / 6));
+}
+
 function embedSpatial(imageData, bits, strength = 6, seed = 'rbwm') {
-  const rand = seededRandom(seed + '-spatial');
   const { data, width, height } = imageData;
   const pixels = width * height;
+  const rand = seededRandom(seed + '-spatial');
   const amplitude = 0.8 * strength;
-  const positionsPerBit = Math.max(12, Math.floor(pixels / Math.max(bits.length, 1) / 6));
+  const countPerBit = positionsPerBit(pixels, bits.length);
   for (let bitIndex = 0; bitIndex < bits.length; bitIndex++) {
     const bit = bits[bitIndex] ? 1 : -1;
-    for (let i = 0; i < positionsPerBit; i++) {
+    for (let i = 0; i < countPerBit; i++) {
       const pos = Math.floor(rand() * pixels);
       const idx = pos * 4;
       const pn = rand() > 0.5 ? 1 : -1;
@@ -336,19 +353,19 @@ function embedSpatial(imageData, bits, strength = 6, seed = 'rbwm') {
       data[idx + 2] = clamp(data[idx + 2] + delta);
     }
   }
-  log(`空域扩频写入 ${bits.length} bits，扩展度 ${positionsPerBit}`);
+  log(`空域扩频写入 ${bits.length} bits，扩展度 ${countPerBit}`);
   return imageData;
 }
 
-function extractSpatial(imageData, bitCount, seed = 'rbwm') {
-  const rand = seededRandom(seed + '-spatial');
+function extractSpatialBits(imageData, bitCount, seed) {
   const { data, width, height } = imageData;
   const pixels = width * height;
-  const positionsPerBit = Math.max(12, Math.floor(pixels / Math.max(bitCount || 1, 1) / 6));
+  const rand = seededRandom(seed + '-spatial');
+  const countPerBit = positionsPerBit(pixels, bitCount);
   const bits = [];
-  for (let bitIndex = 0; bitCount === 0 || bitIndex < bitCount; bitIndex++) {
+  for (let bitIndex = 0; bitIndex < bitCount; bitIndex++) {
     let accum = 0;
-    for (let i = 0; i < positionsPerBit; i++) {
+    for (let i = 0; i < countPerBit; i++) {
       const pos = Math.floor(rand() * pixels);
       const idx = pos * 4;
       const pn = rand() > 0.5 ? 1 : -1;
@@ -356,16 +373,20 @@ function extractSpatial(imageData, bitCount, seed = 'rbwm') {
       accum += (lum - 128) * pn;
     }
     bits.push(accum > 0 ? 1 : 0);
-    if (bitCount === 0 && bits.length > 16) {
-      // if auto length, stop once length is parsed and reached
-      const lenBits = bits.slice(0, 16);
-      let length = 0;
-      lenBits.forEach(b => length = (length << 1) | b);
-      const needed = 16 + length * 8;
-      if (bits.length >= needed) break;
-    }
   }
   return bits;
+}
+
+function extractSpatial(imageData, bitCount, seed = 'rbwm') {
+  if (bitCount && bitCount > 0) {
+    return extractSpatialBits(imageData, bitCount, seed);
+  }
+  // two-pass: first decode长度头，再按总长度重新采样，保证写入/读取扩展度一致
+  const header = extractSpatialBits(imageData, 16, seed);
+  let length = 0;
+  header.forEach(b => { length = (length << 1) | b; });
+  const totalBits = 16 + length * 8;
+  return extractSpatialBits(imageData, totalBits, seed);
 }
 
 function drawImageData(canvas, imageData) {
