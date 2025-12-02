@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RBWM 图片隐写水印实验室</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0e172a;
+      --card: #111827;
+      --accent: #60a5fa;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --border: #1f2937;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at 20% 20%, rgba(96,165,250,0.08), transparent 25%),
+                  radial-gradient(circle at 80% 10%, rgba(34,211,238,0.08), transparent 20%),
+                  var(--bg);
+      color: var(--text);
+      padding: 24px;
+      display: flex;
+      justify-content: center;
+    }
+    .page {
+      width: min(1200px, 100%);
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .header {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+    h1 { margin: 0; font-size: 1.8rem; letter-spacing: 0.02em; }
+    .badge { padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+    .card {
+      background: rgba(17,24,39,0.75);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    }
+    .card h2 { margin-top: 0; font-size: 1.1rem; }
+    label { display: block; margin-bottom: 8px; color: var(--muted); font-size: 0.9rem; }
+    textarea, input[type="text"], input[type="number"], input[type="file"], select {
+      width: 100%;
+      padding: 10px;
+      margin-top: 4px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(31,41,55,0.6);
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+    textarea { min-height: 120px; resize: vertical; }
+    .checkboxes { display: flex; flex-direction: column; gap: 8px; }
+    .btn {
+      background: linear-gradient(120deg, #60a5fa, #34d399);
+      color: #0b1021;
+      padding: 12px 16px;
+      border: none;
+      border-radius: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      width: 100%;
+      text-align: center;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .btn:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(96,165,250,0.25); }
+    .btn.secondary { background: none; color: var(--text); border: 1px solid var(--border); box-shadow: none; }
+    .preview-wrapper { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+    canvas, img { width: 100%; border-radius: 10px; border: 1px solid var(--border); background: #0b1021; }
+    .log { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 0.9rem; white-space: pre-wrap; background: rgba(255,255,255,0.04); padding: 12px; border-radius: 10px; border: 1px solid var(--border); min-height: 60px; }
+    .inline { display: flex; gap: 8px; }
+    .inline > * { flex: 1; }
+    @media (max-width: 720px) { body { padding: 12px; } .inline { flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="header">
+      <h1>RBWM | 频域/空域图片隐写</h1>
+      <span class="badge">抗压缩 · 抗转码 · 截图可检</span>
+    </div>
+    <div class="cards">
+      <section class="card">
+        <h2>载体图片</h2>
+        <label>选择图片文件（支持手机/电脑）：<input type="file" id="coverInput" accept="image/*"></label>
+        <label>水印文本（最多约 200 字符）<textarea id="message" placeholder="输入需要隐藏的文字..."></textarea></label>
+        <div class="inline">
+          <label>密钥 / 种子<input type="text" id="seed" value="rbwm-2024"></label>
+          <label>强度 (1-12)<input type="number" id="strength" min="1" max="12" value="6"></label>
+        </div>
+        <div class="checkboxes">
+          <label><input type="checkbox" id="algo-dct" checked> DCT 频域水印（块状嵌入，抗压缩）</label>
+          <label><input type="checkbox" id="algo-dwt" checked> DWT 频域水印（Haar 小波，抗缩放）</label>
+          <label><input type="checkbox" id="algo-spatial" checked> 空域伪随机扩频（抗截图/转码相关检测）</label>
+        </div>
+        <div class="inline">
+          <button class="btn" id="embedBtn">写入水印</button>
+          <button class="btn secondary" id="downloadBtn" disabled>下载含水印图片</button>
+        </div>
+      </section>
+      <section class="card">
+        <h2>检测 / 反操作</h2>
+        <label>需要检测的图片<input type="file" id="stegoInput" accept="image/*"></label>
+        <div class="inline">
+          <label>密钥 / 种子<input type="text" id="detectSeed" value="rbwm-2024"></label>
+          <label>估计长度（留空自动从水印头读取）<input type="number" id="detectLen" min="0" placeholder="自动"></label>
+        </div>
+        <div class="checkboxes">
+          <label><input type="checkbox" id="detect-dct" checked> 解析 DCT 水印</label>
+          <label><input type="checkbox" id="detect-dwt" checked> 解析 DWT 水印</label>
+          <label><input type="checkbox" id="detect-spatial" checked> 解析空域扩频</label>
+        </div>
+        <button class="btn" id="detectBtn">提取/检测水印</button>
+        <label>检测结果<textarea id="detectResult" readonly></textarea></label>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>预览与日志</h2>
+      <div class="preview-wrapper">
+        <div>
+          <strong>原图预览</strong>
+          <canvas id="coverPreview" height="320"></canvas>
+        </div>
+        <div>
+          <strong>水印后</strong>
+          <canvas id="stegoPreview" height="320"></canvas>
+        </div>
+      </div>
+      <div class="log" id="log"></div>
+    </section>
+  </main>
+  <script src="main.js"></script>
+</body>
+</html>
