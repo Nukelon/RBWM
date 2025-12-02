@@ -318,17 +318,12 @@ function extractDWT(imageData, bitCount = 0) {
   return bits;
 }
 
-function spatialPositionsPerBit(width, height) {
-  const pixels = width * height;
-  return Math.max(24, Math.floor(pixels / 2048));
-}
-
 function embedSpatial(imageData, bits, strength = 6, seed = 'rbwm') {
   const rand = seededRandom(seed + '-spatial');
   const { data, width, height } = imageData;
   const pixels = width * height;
-  const amplitude = Math.max(1.2, 1.0 * strength);
-  const positionsPerBit = spatialPositionsPerBit(width, height);
+  const amplitude = 0.8 * strength;
+  const positionsPerBit = Math.max(12, Math.floor(pixels / Math.max(bits.length, 1) / 6));
   for (let bitIndex = 0; bitIndex < bits.length; bitIndex++) {
     const bit = bits[bitIndex] ? 1 : -1;
     for (let i = 0; i < positionsPerBit; i++) {
@@ -349,24 +344,18 @@ function extractSpatial(imageData, bitCount, seed = 'rbwm') {
   const rand = seededRandom(seed + '-spatial');
   const { data, width, height } = imageData;
   const pixels = width * height;
-  const positionsPerBit = spatialPositionsPerBit(width, height);
+  const positionsPerBit = Math.max(12, Math.floor(pixels / Math.max(bitCount || 1, 1) / 6));
   const bits = [];
   for (let bitIndex = 0; bitCount === 0 || bitIndex < bitCount; bitIndex++) {
-    let lumSum = 0;
-    let pnSum = 0;
     let accum = 0;
     for (let i = 0; i < positionsPerBit; i++) {
       const pos = Math.floor(rand() * pixels);
       const idx = pos * 4;
       const pn = rand() > 0.5 ? 1 : -1;
       const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-      lumSum += lum;
-      pnSum += pn;
-      accum += lum * pn;
+      accum += (lum - 128) * pn;
     }
-    const mean = lumSum / positionsPerBit;
-    const corrected = accum - mean * pnSum;
-    bits.push(corrected > 0 ? 1 : 0);
+    bits.push(accum > 0 ? 1 : 0);
     if (bitCount === 0 && bits.length > 16) {
       // if auto length, stop once length is parsed and reached
       const lenBits = bits.slice(0, 16);
