@@ -554,6 +554,17 @@
       encodeBtn.disabled = false;
     }
 
+    function uniqueList(values) {
+      return [...new Set(values.map((v) => Number(v.toFixed(2))))];
+    }
+
+    function tryDecodeWith(imageData, repeat, step) {
+      const headerBits = 16 + 180 * 8 + 32;
+      const rawBits = extractBits(imageData, headerBits * repeat, repeat, step);
+      const payload = parsePayloadBits(rawBits);
+      return payload ? { payload, repeat, step } : null;
+    }
+
     async function decodeStego() {
       const file = cipherInput.files?.[0];
       if (!file) return alert("请上传含隐写的图片");
@@ -567,15 +578,28 @@
         const ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const headerBits = 16 + 180 * 8 + 32;
-        const repeat = Number(repeatInput.value);
-        const step = Number(strengthInput.value);
-        const rawBits = extractBits(imageData, headerBits * repeat, repeat, step / 10);
-        const payload = parsePayloadBits(rawBits);
-        if (!payload) {
+
+        const preferredRepeat = Number(repeatInput.value);
+        const preferredStep = Number(strengthInput.value) / 10;
+        const repeats = uniqueList([preferredRepeat, 4, 6, 8, 10, 12, 14, 16]);
+        const steps = uniqueList(
+          [preferredStep].concat(Array.from({ length: 19 }, (_, i) => 0.8 + i * 0.1))
+        );
+
+        let result = null;
+        for (const step of steps) {
+          for (const repeat of repeats) {
+            result = tryDecodeWith(imageData, repeat, step);
+            if (result) break;
+          }
+          if (result) break;
+        }
+
+        if (!result) {
           setLog("未能可靠读出信息。尝试提高重复次数或使用更清晰的截图。");
         } else {
-          setLog(`成功解码：\n${payload}`);
+          const { payload, repeat, step } = result;
+          setLog(`成功解码（重复 ${repeat} 次，步长 ${step.toFixed(1)}）：\n${payload}`);
         }
       } catch (err) {
         console.error(err);
