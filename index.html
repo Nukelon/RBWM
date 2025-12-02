@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>自适应图片隐写实验室</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>自适应图片隐写与检测</h1>
+    <p>支持频域水印（DCT / DWT）与空域伪随机模式，可组合使用，兼顾抗压缩、抗转码、抗截图。</p>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>1. 载入图片</h2>
+      <input type="file" id="imageInput" accept="image/*" />
+      <div class="canvas-grid">
+        <div>
+          <h3>原图</h3>
+          <canvas id="originalCanvas" width="640" height="360"></canvas>
+        </div>
+        <div>
+          <h3>水印结果</h3>
+          <canvas id="resultCanvas" width="640" height="360"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>2. 水印配置</h2>
+      <label for="message">要隐藏的文字（不会很大，适合短句）</label>
+      <textarea id="message" rows="3" placeholder="例如：Hello, 隐写!"></textarea>
+
+      <div class="options">
+        <label><input type="checkbox" id="useDct" checked /> DCT 频域水印</label>
+        <label><input type="checkbox" id="useDwt" checked /> DWT 频域水印</label>
+        <label><input type="checkbox" id="useSpatial" checked /> 空域伪随机模式</label>
+      </div>
+
+      <div class="grid">
+        <label>随机种子（数值）<input type="number" id="seed" value="2024" /></label>
+        <label>频域量化强度（越大越强）<input type="number" id="strength" value="12" min="4" max="40" /></label>
+        <label>重复次数（抵抗截图）<input type="number" id="repeat" value="6" min="1" max="24" /></label>
+      </div>
+
+      <div class="actions">
+        <button id="embed">嵌入水印</button>
+        <button id="decode">提取/检测</button>
+        <button id="download">下载水印图</button>
+      </div>
+      <p class="hint">提示：可以同时勾选多个算法，信息会在多个域重复写入，提升鲁棒性。</p>
+    </section>
+
+    <section class="panel">
+      <h2>3. 结果与日志</h2>
+      <pre id="log"></pre>
+    </section>
+  </main>
+
+  <script src="main.js"></script>
+</body>
+</html>
