@@ -559,8 +559,19 @@
     }
 
     function tryDecodeWith(imageData, repeat, step) {
-      const headerBits = 16 + 180 * 8 + 32;
-      const rawBits = extractBits(imageData, headerBits * repeat, repeat, step);
+      const blocksX = Math.floor(imageData.width / BLOCK);
+      const blocksY = Math.floor(imageData.height / BLOCK);
+      const capacity = blocksX * blocksY;
+
+      const lenBits = extractBits(imageData, 16 * repeat, repeat, step);
+      const lenBytes = bytesFromBits(lenBits);
+      const len = (lenBytes[0] << 8) | lenBytes[1];
+      if (!Number.isFinite(len) || len < 0 || len > 180) return null;
+
+      const totalBits = (len + 2 + 4) * 8;
+      if (totalBits * repeat > capacity) return null;
+
+      const rawBits = extractBits(imageData, totalBits * repeat, repeat, step);
       const payload = parsePayloadBits(rawBits);
       return payload ? { payload, repeat, step } : null;
     }
