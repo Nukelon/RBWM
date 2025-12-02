@@ -478,7 +478,11 @@ function autoBitCount(bits) {
   if (bits.length < 16) return 0;
   let len = 0;
   for (let i = 0; i < 16; i++) len = (len << 1) | bits[i];
-  return 16 + len * 8;
+  // 当压缩/失真导致长度头被破坏时，原始长度可能极大，导致后续解码充满乱码。
+  // 将长度限制在当前已提取比特的最大可用范围内，可减少错误长度头带来的尾部噪声。
+  const maxLen = Math.max(0, Math.floor((bits.length - 16) / 8));
+  const safeLen = Math.min(len, maxLen);
+  return 16 + safeLen * 8;
 }
 
 function extractFromImage(imageData) {
