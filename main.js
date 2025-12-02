@@ -10,6 +10,7 @@ const embedBtn = document.getElementById('embedBtn');
 const downloadBtn = document.getElementById('downloadBtn');
 const detectBtn = document.getElementById('detectBtn');
 const detectResult = document.getElementById('detectResult');
+const debugOutput = document.getElementById('debugOutput');
 const detectSeedInput = document.getElementById('detectSeed');
 const detectLenInput = document.getElementById('detectLen');
 
@@ -88,6 +89,22 @@ function bitsToText(bits, forcedLen) {
   } catch (e) {
     return '';
   }
+}
+
+function isLikelyGibberish(text) {
+  if (!text) return false;
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  const chars = [...trimmed];
+  let noisy = 0;
+  for (const ch of chars) {
+    const code = ch.codePointAt(0);
+    const isCommon = /[\w\s.,;:!?"'`~\-\(\)\[\]\{\}…，。！？【】（）《》、“”‘’·\u4e00-\u9fa5]/u.test(ch);
+    const isControl = code !== undefined && (code < 32 || (code >= 0x7f && code <= 0x9f));
+    if (!isCommon || isControl || ch === '\ufffd') noisy++;
+  }
+  const noiseRatio = noisy / chars.length;
+  return noiseRatio >= 0.35 || chars.length >= 6 && new Set(chars).size <= 2;
 }
 
 function loadImageToCanvas(file, canvas) {
@@ -473,25 +490,49 @@ function extractFromImage(imageData) {
     spatial: document.getElementById('detect-spatial').checked,
   };
   const results = [];
+  const hiddenOutputs = [];
   if (selected.dct) {
     const raw = extractDCT(imageData, forcedLen ? forcedLen * 8 + 16 : 0);
     const lenBits = forcedLen ? forcedLen * 8 + 16 : autoBitCount(raw);
     const msg = bitsToText(raw.slice(0, lenBits), forcedLen);
-    results.push(`DCT 提取：${msg || '[未解析到内容]'}`);
+    const gibberish = isLikelyGibberish(msg);
+    if (gibberish) {
+      hiddenOutputs.push(`DCT 提取（疑似乱码）:\n${msg}`);
+      results.push('DCT 提取：疑似乱码，已隐藏至下方调试框');
+    } else {
+      results.push(`DCT 提取：${msg || '[未解析到内容]'}`);
+    }
   }
   if (selected.dwt) {
     const raw = extractDWT(imageData, forcedLen ? forcedLen * 8 + 16 : 0);
     const lenBits = forcedLen ? forcedLen * 8 + 16 : autoBitCount(raw);
     const msg = bitsToText(raw.slice(0, lenBits), forcedLen);
-    results.push(`DWT 提取：${msg || '[未解析到内容]'}`);
+    const gibberish = isLikelyGibberish(msg);
+    if (gibberish) {
+      hiddenOutputs.push(`DWT 提取（疑似乱码）:\n${msg}`);
+      results.push('DWT 提取：疑似乱码，已隐藏至下方调试框');
+    } else {
+      results.push(`DWT 提取：${msg || '[未解析到内容]'}`);
+    }
   }
   if (selected.spatial) {
     const raw = extractSpatial(imageData, forcedLen ? forcedLen * 8 + 16 : 0, seed);
     const lenBits = forcedLen ? forcedLen * 8 + 16 : autoBitCount(raw);
     const msg = bitsToText(raw.slice(0, lenBits), forcedLen);
-    results.push(`空域扩频提取：${msg || '[未解析到内容]'}`);
+    const gibberish = isLikelyGibberish(msg);
+    if (gibberish) {
+      hiddenOutputs.push(`空域扩频提取（疑似乱码）:\n${msg}`);
+      results.push('空域扩频提取：疑似乱码，已隐藏至下方调试框');
+    } else {
+      results.push(`空域扩频提取：${msg || '[未解析到内容]'}`);
+    }
   }
   detectResult.value = results.join('\n');
+  if (debugOutput) {
+    debugOutput.value = hiddenOutputs.length
+      ? hiddenOutputs.join('\n\n---\n\n')
+      : '暂无隐藏输出或乱码内容';
+  }
   log('检测完成');
 }
 
