@@ -565,6 +565,12 @@
       return payload ? { payload, repeat, step } : null;
     }
 
+    function buildStepCandidates(preferredStep) {
+      const fineSteps = Array.from({ length: 50 }, (_, i) => 0.6 + i * 0.05);
+      const stepped = new Set([preferredStep, ...fineSteps]);
+      return Array.from(stepped).sort((a, b) => Math.abs(a - preferredStep) - Math.abs(b - preferredStep));
+    }
+
     async function decodeStego() {
       const file = cipherInput.files?.[0];
       if (!file) return alert("请上传含隐写的图片");
@@ -582,9 +588,7 @@
         const preferredRepeat = Number(repeatInput.value);
         const preferredStep = Number(strengthInput.value) / 10;
         const repeats = uniqueList([preferredRepeat, 4, 6, 8, 10, 12, 14, 16]);
-        const steps = uniqueList(
-          [preferredStep].concat(Array.from({ length: 19 }, (_, i) => 0.8 + i * 0.1))
-        );
+        const steps = buildStepCandidates(preferredStep);
 
         let result = null;
         for (const step of steps) {
