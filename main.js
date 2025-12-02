@@ -11,6 +11,7 @@ const downloadBtn = document.getElementById('downloadBtn');
 const detectBtn = document.getElementById('detectBtn');
 const detectResult = document.getElementById('detectResult');
 const debugOutput = document.getElementById('debugOutput');
+const stegoDownloadImg = document.getElementById('stegoPreviewImg');
 const detectSeedInput = document.getElementById('detectSeed');
 const detectLenInput = document.getElementById('detectLen');
 
@@ -210,51 +211,78 @@ function idct2(coeff) {
   return block;
 }
 
-function embedDCT(imageData, bits, strength = 6) {
+function dctBlockCenters(imageData) {
+  const coords = [];
+  for (let y = 0; y + 8 <= imageData.height; y += 8) {
+    for (let x = 0; x + 8 <= imageData.width; x += 8) {
+      coords.push([x, y]);
+    }
+  }
+  return coords;
+}
+
+function embedDCT(imageData, bits, strength = 6, seed = 'rbwm') {
   const baseLuma = toLuma(imageData);
   const luma = copyMatrix(baseLuma);
-  const w = imageData.width, h = imageData.height;
-  const delta = 2 + strength * 0.8;
+  const coords = dctBlockCenters(imageData);
+  const rng = seededRandom(`${seed}-dct`);
+  const shuffled = coords.sort(() => rng() - 0.5);
+  const step = Math.max(5, strength * 1.5);
+  const repeats = Math.max(3, Math.floor(shuffled.length / bits.length / 4));
   const posA = [2, 3], posB = [3, 2];
-  let bitIdx = 0;
-  for (let by = 0; by < h; by += 8) {
-    for (let bx = 0; bx < w; bx += 8) {
-      if (bitIdx >= bits.length) break;
+  let written = 0;
+
+  for (let idx = 0; idx < bits.length; idx++) {
+    for (let r = 0; r < repeats; r++) {
+      const coord = shuffled[(idx * repeats + r) % shuffled.length];
+      const [bx, by] = coord;
       const block = Array.from({ length: 8 }, (_, i) => luma[by + i]?.slice(bx, bx + 8) || new Array(8).fill(0));
       const coeff = dct2(block);
-      const bit = bits[bitIdx];
       const diff = coeff[posA[0]][posA[1]] - coeff[posB[0]][posB[1]];
-      if (bit === 1 && diff < delta) {
-        coeff[posA[0]][posA[1]] += delta - diff;
-      } else if (bit === 0 && diff > -delta) {
-        coeff[posB[0]][posB[1]] += diff + delta;
-      }
+      const q = Math.floor(diff / step);
+      const target = bits[idx] ? q * step + step / 2 : q * step - step / 2;
+      const adjust = target - diff;
+      coeff[posA[0]][posA[1]] += adjust / 2;
+      coeff[posB[0]][posB[1]] -= adjust / 2;
       const newBlock = idct2(coeff);
       for (let i = 0; i < 8; i++) {
         for (let j = 0; j < 8; j++) {
-          if (by + i < h && bx + j < w) luma[by + i][bx + j] = newBlock[i][j];
+          if (by + i < imageData.height && bx + j < imageData.width) {
+            luma[by + i][bx + j] = newBlock[i][j];
+          }
         }
       }
-      bitIdx++;
+      written++;
     }
-    if (bitIdx >= bits.length) break;
   }
-  log(`DCT 水印写入 ${bitIdx} bits`);
+  log(`DCT 水印写入 ${bits.length} bits，重复度 ${repeats}`);
   return applyLumaToImageData(imageData, luma, baseLuma);
 }
 
-function extractDCT(imageData, bitCount = 0) {
+function extractDCT(imageData, bitCount = 0, seed = 'rbwm', strength = 6) {
   const luma = toLuma(imageData);
-  const w = imageData.width, h = imageData.height;
+  const coords = dctBlockCenters(imageData);
+  const rng = seededRandom(`${seed}-dct`);
+  const shuffled = coords.sort(() => rng() - 0.5);
   const posA = [2, 3], posB = [3, 2];
+  const step = Math.max(5, strength * 1.5);
+  const repeats = Math.max(3, Math.floor(shuffled.length / Math.max(bitCount || 1, 1) / 4));
   const bits = [];
-  for (let by = 0; by < h; by += 8) {
-    for (let bx = 0; bx < w; bx += 8) {
+
+  const totalBits = bitCount || Math.floor(shuffled.length / repeats);
+  for (let idx = 0; idx < totalBits; idx++) {
+    let votes = 0;
+    for (let r = 0; r < repeats; r++) {
+      const coord = shuffled[(idx * repeats + r) % shuffled.length];
+      const [bx, by] = coord;
       const block = Array.from({ length: 8 }, (_, i) => luma[by + i]?.slice(bx, bx + 8) || new Array(8).fill(0));
       const coeff = dct2(block);
-      bits.push(coeff[posA[0]][posA[1]] - coeff[posB[0]][posB[1]] > 0 ? 1 : 0);
-      if (bitCount && bits.length >= bitCount) return bits;
+      const diff = coeff[posA[0]][posA[1]] - coeff[posB[0]][posB[1]];
+      const residue = ((diff % (2 * step)) + (2 * step)) % (2 * step);
+      votes += residue > step ? 1 : -1;
     }
+    bits.push(votes >= 0 ? 1 : 0);
+    if (bitCount && bits.length >= bitCount) break;
   }
   return bits;
 }
@@ -348,26 +376,36 @@ function extractDWT(imageData, bitCount = 0) {
   return bits;
 }
 
-function positionsPerBit(pixels, bitCount) {
-  return Math.max(12, Math.floor(pixels / Math.max(bitCount, 1) / 6));
+function positionsPerBit(pixels) {
+  return Math.max(24, Math.floor(pixels / 5000));
+}
+
+function pnForBit(seed, bitIndex) {
+  return seededRandom(`${seed}-spatial-${bitIndex}`);
 }
 
 function embedSpatial(imageData, bits, strength = 6, seed = 'rbwm') {
-  const { data, width, height } = imageData;
-  const pixels = width * height;
-  const rand = seededRandom(seed + '-spatial');
-  const amplitude = 0.8 * strength;
-  const countPerBit = positionsPerBit(pixels, bits.length);
+  const { data } = imageData;
+  const pixels = imageData.width * imageData.height;
+  const amplitude = 0.7 * strength;
+  const countPerBit = positionsPerBit(pixels);
+
   for (let bitIndex = 0; bitIndex < bits.length; bitIndex++) {
     const bit = bits[bitIndex] ? 1 : -1;
-    for (let i = 0; i < countPerBit; i++) {
+    const rand = pnForBit(seed, bitIndex);
+    const used = new Set();
+    let samples = 0;
+    while (samples < countPerBit) {
       const pos = Math.floor(rand() * pixels);
+      if (used.has(pos)) continue;
+      used.add(pos);
       const idx = pos * 4;
       const pn = rand() > 0.5 ? 1 : -1;
       const delta = amplitude * pn * bit;
       data[idx] = clamp(data[idx] + delta);
       data[idx + 1] = clamp(data[idx + 1] + delta);
       data[idx + 2] = clamp(data[idx + 2] + delta);
+      samples++;
     }
   }
   log(`空域扩频写入 ${bits.length} bits，扩展度 ${countPerBit}`);
@@ -375,21 +413,26 @@ function embedSpatial(imageData, bits, strength = 6, seed = 'rbwm') {
 }
 
 function extractSpatialBits(imageData, bitCount, seed) {
-  const { data, width, height } = imageData;
-  const pixels = width * height;
-  const rand = seededRandom(seed + '-spatial');
-  const countPerBit = positionsPerBit(pixels, bitCount);
+  const { data } = imageData;
+  const pixels = imageData.width * imageData.height;
+  const countPerBit = positionsPerBit(pixels);
   const bits = [];
   for (let bitIndex = 0; bitIndex < bitCount; bitIndex++) {
+    const rand = pnForBit(seed, bitIndex);
+    const used = new Set();
     let accum = 0;
-    for (let i = 0; i < countPerBit; i++) {
+    let samples = 0;
+    while (samples < countPerBit) {
       const pos = Math.floor(rand() * pixels);
+      if (used.has(pos)) continue;
+      used.add(pos);
       const idx = pos * 4;
       const pn = rand() > 0.5 ? 1 : -1;
       const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
       accum += (lum - 128) * pn;
+      samples++;
     }
-    bits.push(accum > 0 ? 1 : 0);
+    bits.push(accum >= 0 ? 1 : 0);
   }
   return bits;
 }
@@ -398,7 +441,6 @@ function extractSpatial(imageData, bitCount, seed = 'rbwm') {
   if (bitCount && bitCount > 0) {
     return extractSpatialBits(imageData, bitCount, seed);
   }
-  // two-pass: first decode长度头，再按总长度重新采样，保证写入/读取扩展度一致
   const header = extractSpatialBits(imageData, 16, seed);
   let length = 0;
   header.forEach(b => { length = (length << 1) | b; });
@@ -423,13 +465,16 @@ async function handleCoverInput(file) {
 async function handleStegoInput(file) {
   if (!file) return;
   stegoImageData = await loadImageToCanvas(file, stegoPreview);
+  if (stegoDownloadImg) {
+    stegoDownloadImg.src = stegoPreview.toDataURL('image/png');
+  }
   log(`载入待检测图：${file.name}`);
 }
 
 function ensureBitsCapacity(bits, imageData) {
   const blockCount = Math.floor(imageData.width / 8) * Math.floor(imageData.height / 8);
   const dwtCount = Math.floor(imageData.width / 2) * Math.floor(imageData.height / 2);
-  const spatialCount = bits.length; // spread spectrum repeats internally
+  const spatialCount = bits.length; // 空域内部已扩频，外部只需要总比特数
   return bits.length <= blockCount + dwtCount + spatialCount;
 }
 
@@ -451,11 +496,18 @@ async function embedWatermark() {
   const strength = Number(strengthInput.value) || 6;
   const seed = seedInput.value || 'rbwm';
   let out = imageDataCopy(coverImageData);
-  if (document.getElementById('algo-dct').checked) out = embedDCT(out, bits, strength);
+  if (document.getElementById('algo-dct').checked) out = embedDCT(out, bits, strength, seed);
   if (document.getElementById('algo-dwt').checked) out = embedDWT(out, bits, strength);
   if (document.getElementById('algo-spatial').checked) out = embedSpatial(out, bits, strength, seed);
   stegoImageData = out;
   drawImageData(stegoPreview, out);
+  if (stegoDownloadImg) {
+    const tmp = document.createElement('canvas');
+    tmp.width = out.width;
+    tmp.height = out.height;
+    tmp.getContext('2d').putImageData(out, 0, 0);
+    stegoDownloadImg.src = tmp.toDataURL('image/png');
+  }
   downloadBtn.disabled = false;
   log('水印写入完成，可下载或直接检测');
 }
@@ -487,6 +539,7 @@ function autoBitCount(bits) {
 
 function extractFromImage(imageData) {
   const seed = detectSeedInput.value || 'rbwm';
+  const detectStrength = Number(strengthInput.value || 6);
   const forcedLen = Number(detectLenInput.value || 0);
   const selected = {
     dct: document.getElementById('detect-dct').checked,
@@ -496,7 +549,7 @@ function extractFromImage(imageData) {
   const results = [];
   const hiddenOutputs = [];
   if (selected.dct) {
-    const raw = extractDCT(imageData, forcedLen ? forcedLen * 8 + 16 : 0);
+    const raw = extractDCT(imageData, forcedLen ? forcedLen * 8 + 16 : 0, seed, detectStrength);
     const lenBits = forcedLen ? forcedLen * 8 + 16 : autoBitCount(raw);
     const msg = bitsToText(raw.slice(0, lenBits), forcedLen);
     const gibberish = isLikelyGibberish(msg);
